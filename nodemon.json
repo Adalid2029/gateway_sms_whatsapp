@@ -1,0 +1,9 @@
+{
+    "ignore": [
+        "tokens/*",
+        "*.log"
+    ],
+    "watch": [
+        "src/"
+    ]
+}
