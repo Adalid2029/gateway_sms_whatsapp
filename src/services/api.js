@@ -25,6 +25,11 @@ class ApiService {
             });
 
             const data = await response.json();
+            console.log('Respuesta completa del login:', data);
+            console.log('Credenciales usadas:', {
+                email: process.env.API_EMAIL,
+                device_name: process.env.API_DEVICE_NAME,
+            });            
             
             if (data.token) {
                 this.token = data.token;

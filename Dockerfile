@@ -1,44 +1,48 @@
-FROM node:22-alpine
+# Usar imagen más ligera
+FROM node:22-bullseye-slim
 
-# Usar una versión específica de Alpine que tenga Chromium estable
-# Alpine 3.19 tenía Chromium más estable
-FROM node:22-alpine3.19
-
-# Instalar dependencias necesarias para Puppeteer/Chromium
-RUN apk add --no-cache \
+# Instalar solo dependencias críticas
+RUN apt-get update && apt-get install -y \
     chromium \
-    nss \
-    freetype \
-    freetype-dev \
-    harfbuzz \
-    ca-certificates \
-    ttf-freefont \
-    nodejs \
-    yarn \
-    bash
+    dumb-init \
+    && rm -rf /var/lib/apt/lists/*
 
-# Configurar variables de entorno para Puppeteer
+# Crear usuario no-root para seguridad
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -S appuser -u 1001 -G appgroup
+
+# Configurar variables de entorno optimizadas
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
-    NODE_ENV=production
+    NODE_ENV=production \
+    NODE_OPTIONS="--max-old-space-size=350" \
+    CHROME_BIN=/usr/bin/chromium-browser \
+    CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-software-rasterizer --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --single-process"
 
-# Crear directorio de la aplicación
 WORKDIR /app
 
-# Copiar package.json y package-lock.json
-COPY package*.json ./
+# Cambiar propiedad al usuario no-root
+RUN chown -R appuser:appgroup /app
 
-# Instalar dependencias
-RUN npm install --omit=dev
+# Copiar archivos de dependencias con permisos correctos
+COPY --chown=appuser:appgroup package*.json ./
 
-# Copiar el código fuente
-COPY . .
+# Cambiar a usuario no-root antes de instalar
+USER appuser
 
-# Crear directorio para tokens de WhatsApp
-RUN mkdir -p tokens && chmod 777 tokens
+# Generar package-lock.json si no existe, luego instalar
+RUN if [ ! -f package-lock.json ]; then npm install --package-lock-only; fi && \
+    npm ci --omit=dev --no-audit --no-fund && \
+    npm cache clean --force
 
-# Puerto (si decidimos exponer algún servicio web en el futuro)
-EXPOSE 4000
+# Copiar código fuente
+COPY --chown=appuser:appgroup . .
 
-# Comando para iniciar la aplicación
-CMD ["node", "src/server.js"]
+# Crear directorio para tokens con permisos
+RUN mkdir -p tokens && chmod 777 tokens && chown -R appuser:appgroup tokens
+
+# Usar dumb-init para manejo correcto de señales
+ENTRYPOINT ["dumb-init", "--"]
+
+# Comando optimizado
+CMD ["node", "--max-old-space-size=350", "src/server.js"]
