@@ -1,0 +1,15 @@
+version: '3'
+
+services:
+  whatsapp-gateway:
+    build: .
+    container_name: whatsapp-gateway
+    restart: unless-stopped
+    volumes:
+      - ./tokens:/app/tokens
+      - ./.env:/app/.env
+    environment:
+      - NODE_ENV=production
+      - TZ=America/La_Paz
+    ports:
+      - "4000:4000"

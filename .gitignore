@@ -1,3 +1,1 @@
-/node_modules
-/tokens
-package-lock.json
+tokens/
