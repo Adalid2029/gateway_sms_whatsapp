@@ -7,16 +7,16 @@ RUN apt-get update && apt-get install -y \
     dumb-init \
     && rm -rf /var/lib/apt/lists/*
 
-# Crear usuario no-root para seguridad
-RUN addgroup -g 1001 -S appgroup && \
-    adduser -S appuser -u 1001 -G appgroup
+# Crear usuario no-root para seguridad (COMANDOS DEBIAN)
+RUN groupadd -g 1001 appgroup && \
+    useradd -r -u 1001 -g appgroup -m appuser
 
 # Configurar variables de entorno optimizadas
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     NODE_ENV=production \
     NODE_OPTIONS="--max-old-space-size=350" \
-    CHROME_BIN=/usr/bin/chromium-browser \
+    CHROME_BIN=/usr/bin/chromium \
     CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-software-rasterizer --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --single-process"
 
 WORKDIR /app
@@ -39,7 +39,7 @@ RUN if [ ! -f package-lock.json ]; then npm install --package-lock-only; fi && \
 COPY --chown=appuser:appgroup . .
 
 # Crear directorio para tokens con permisos
-RUN mkdir -p tokens && chmod 777 tokens && chown -R appuser:appgroup tokens
+RUN mkdir -p tokens && chmod 777 tokens
 
 # Usar dumb-init para manejo correcto de señales
 ENTRYPOINT ["dumb-init", "--"]

@@ -26,7 +26,7 @@ class WhatsAppService {
                 devtools: false,
                 debug: false,
                 logQR: true,
-                createTimeout: 120000,
+                createTimeout: 180000,
                 protocolTimeout: 90000,
 
                 puppeteerOptions: {
@@ -39,7 +39,7 @@ class WhatsAppService {
                         '--disable-web-security',
                         '--no-first-run'
                     ],
-                    executablePath: '/usr/bin/chromium-browser'
+                    executablePath: '/usr/bin/chromium'
                 },
 
                 catchQR: (base64Qr, asciiQR, attempts, urlCode) => {
@@ -51,13 +51,26 @@ class WhatsAppService {
 
                 statusFind: (statusSession, session) => {
                     console.log('Estado de la sesión:', statusSession);
-                    if (statusSession === 'inChat' || statusSession === 'isLogged') {
+
+                    // ✅ Estados que indican conexión exitosa
+                    if (statusSession === 'inChat' || statusSession === 'isLogged' || statusSession === 'qrReadSuccess') {
                         this.isConnected = true;
+                        this.reconnectAttempts = 0; // ✅ Reset contador
                         console.log('WhatsApp conectado exitosamente!');
-                    } else if (statusSession === 'notLogged' || statusSession === 'browserClose') {
-                        this.isConnected = false;
-                        console.log('WhatsApp desconectado. Intentando reconectar...');
-                        this.handleReconnect();
+
+                        // ✅ Estados que requieren espera (NO desconectar)
+                    } else if (statusSession === 'browserSessionConfigured' || statusSession === 'waitForLogin') {
+                        console.log('Configurando sesión, esperando...');
+                        // NO cambiar isConnected aquí
+
+                        // ❌ Estados que indican desconexión real
+                    } else if (statusSession === 'notLogged' || statusSession === 'browserClose' || statusSession === 'desconnectedMobile') {
+                        // Solo reconectar si realmente estaba conectado antes
+                        if (this.isConnected) {
+                            this.isConnected = false;
+                            console.log('WhatsApp desconectado. Intentando reconectar...');
+                            this.handleReconnect();
+                        }
                     }
                 }
             });
@@ -84,16 +97,7 @@ class WhatsAppService {
             const fs = require('fs').promises;
             const sessionDir = path.join(this.sessionPath, 'mySession');
 
-            // Limpiar archivos de lock de Chromium
-            try {
-                const lockFile = path.join(sessionDir, 'SingletonLock');
-                await fs.unlink(lockFile);
-                console.log('🧹 Archivo de lock eliminado');
-            } catch (e) {
-                // No existe, está bien
-            }
-
-            // Limpiar procesos zombie si existen
+            // ✅ Cerrar cliente primero
             if (this.client) {
                 try {
                     await this.client.close();
@@ -102,6 +106,26 @@ class WhatsAppService {
                 }
                 this.client = null;
             }
+
+            // ✅ Limpiar TODOS los archivos de lock
+            const lockFiles = [
+                'SingletonLock',
+                'SingletonSocket',
+                'SingletonCookie'
+            ];
+
+            for (const lockFile of lockFiles) {
+                try {
+                    await fs.unlink(path.join(sessionDir, lockFile));
+                    console.log(`🧹 ${lockFile} eliminado`);
+                } catch (e) {
+                    // No existe, está bien
+                }
+            }
+
+            // ✅ Pequeña pausa para que el sistema libere recursos
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
         } catch (error) {
             console.log('Limpieza de sesión completada');
         }
@@ -117,7 +141,7 @@ class WhatsAppService {
         console.log(`🔄 Intento de reconexión ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
 
         await this.cleanupSession();
-        setTimeout(() => this.initialize(), 10000);
+        setTimeout(() => this.initialize(), 15000);
     }
 
     async startMessagePolling() {
