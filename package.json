@@ -9,7 +9,7 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "@wppconnect-team/wppconnect": "^1.35.2",
+    "@wppconnect-team/wppconnect": "^1.38.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.18.2",
