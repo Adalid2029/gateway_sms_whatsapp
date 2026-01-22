@@ -1,6 +1,7 @@
 // src/services/whatsapp.js
 const wppconnect = require('@wppconnect-team/wppconnect');
 const apiService = require('./api');
+const telegramService = require('./telegram');
 const path = require('path');
 
 class WhatsAppService {
@@ -57,6 +58,7 @@ class WhatsAppService {
                         this.isConnected = true;
                         this.reconnectAttempts = 0;
                         console.log('WhatsApp conectado exitosamente!');
+                        telegramService.sendSuccess('WhatsApp conectado exitosamente');
 
                     } else if (statusSession === 'browserSessionConfigured' || statusSession === 'waitForLogin') {
                         console.log('Configurando sesión, esperando...');
@@ -65,6 +67,7 @@ class WhatsAppService {
                         if (this.isConnected) {
                             this.isConnected = false;
                             console.log('WhatsApp desconectado. Intentando reconectar...');
+                            telegramService.sendCritical(`WhatsApp desconectado (${statusSession}). Intentando reconectar...`);
                             this.handleReconnect();
                         }
                     }
@@ -83,6 +86,7 @@ class WhatsAppService {
 
         } catch (error) {
             console.error('❌ Error iniciando WhatsApp:', error.message);
+            telegramService.sendCritical(`Error iniciando WhatsApp: ${error.message}`);
             await this.handleReconnect();
             return false;
         }
@@ -127,11 +131,13 @@ class WhatsAppService {
     async handleReconnect() {
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
             console.log('❌ Máximo de intentos de reconexión alcanzado');
+            telegramService.sendCritical('Máximo de intentos de reconexión alcanzado. El servicio se detendrá.');
             process.exit(1);
         }
 
         this.reconnectAttempts++;
         console.log(`🔄 Intento de reconexión ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+        telegramService.sendWarning(`Intento de reconexión ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
 
         await this.cleanupSession();
         setTimeout(() => this.initialize(), 15000);
@@ -165,6 +171,7 @@ class WhatsAppService {
                                 // ✅ Si llegamos aquí, el mensaje se envió correctamente
                                 await apiService.confirmMessage(message.id_proveedor_envio_sms, 'COMPLETADO');
                                 console.log(`✅ Mensaje ${message.id_proveedor_envio_sms} enviado`);
+                                telegramService.incrementSent();
 
                             } catch (error) {
                                 // ⚠️ FIX CRÍTICO: Marcar como ERROR para que no se repita infinitamente
@@ -172,11 +179,15 @@ class WhatsAppService {
 
                                 // 🔧 Reportar error a la API
                                 await apiService.confirmMessage(message.id_proveedor_envio_sms, 'ERROR', error.message);
+                                telegramService.incrementFailed();
 
                                 // Verificar si el error es crítico de conexión
                                 if (error.message.includes('detached') || error.message.includes('Target closed')) {
                                     this.isConnected = false;
+                                    telegramService.sendCritical(`Error crítico de conexión: ${error.message}`);
                                     break;
+                                } else {
+                                    telegramService.sendWarning(`Error enviando mensaje #${message.id_proveedor_envio_sms}: ${error.message}`);
                                 }
                             }
 
@@ -190,6 +201,9 @@ class WhatsAppService {
                     this.isProcessingMessages = false;
                 }
             }
+
+            // Enviar resumen periódico (cada hora)
+            telegramService.sendSummary(this.isConnected);
         }, interval);
     }
 

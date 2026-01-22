@@ -2,6 +2,7 @@
 require('dotenv').config();
 const whatsappService = require('./services/whatsapp');
 const apiService = require('./services/api');
+const telegramService = require('./services/telegram');
 
 // Configuración de manejo de memoria
 process.on('warning', (warning) => {
@@ -30,13 +31,15 @@ async function gracefulShutdown(signal) {
 }
 
 // Manejo de errores no capturados
-process.on('uncaughtException', (error) => {
+process.on('uncaughtException', async (error) => {
     console.error('❌ Excepción no capturada:', error);
+    await telegramService.sendCritical(`Excepción no capturada: ${error.message}`);
     process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', async (reason, promise) => {
     console.error('❌ Promesa rechazada no manejada:', reason);
+    await telegramService.sendCritical(`Promesa rechazada: ${reason}`);
     process.exit(1);
 });
 
@@ -56,6 +59,7 @@ async function startServer() {
         console.log('🔐 Intentando autenticación...');
         const loginSuccess = await apiService.login();
         if (!loginSuccess) {
+            await telegramService.sendCritical('No se pudo iniciar sesión en la API');
             throw new Error('❌ No se pudo iniciar sesión en la API');
         }
         console.log('✅ Autenticación exitosa');
@@ -78,6 +82,8 @@ async function startServer() {
 
         console.log('🎉 Gateway SMS WhatsApp iniciado exitosamente');
         console.log('⏰ Interval de verificación:', (process.env.CHECK_MESSAGES_INTERVAL || 15000) + 'ms');
+
+        await telegramService.sendSuccess('Gateway SMS WhatsApp iniciado correctamente');
 
     } catch (error) {
         console.error('❌ Error iniciando el servidor:', error);
