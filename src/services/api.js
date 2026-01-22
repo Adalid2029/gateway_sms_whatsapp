@@ -1,5 +1,5 @@
 // src/services/api.js
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 require('dotenv').config();
 
 class ApiService {
@@ -25,22 +25,17 @@ class ApiService {
             });
 
             const data = await response.json();
-            console.log('Respuesta completa del login:', data);
-            console.log('Credenciales usadas:', {
-                email: process.env.API_EMAIL,
-                device_name: process.env.API_DEVICE_NAME,
-            });            
-            
+
             if (data.token) {
                 this.token = data.token;
                 console.log('Token obtenido exitosamente');
                 return true;
             }
-            
-            console.error('No se encontró token en la respuesta:', data);
+
+            console.error('No se encontró token en la respuesta');
             return false;
         } catch (error) {
-            console.error('Error completo en login:', error);
+            console.error('Error completo en login:', error.message);
             return false;
         }
     }
@@ -58,37 +53,53 @@ class ApiService {
             });
 
             const data = await response.json();
-            console.log('Mensajes pendientes recibidos:', data);
+
+            // 🔇 Solo mostrar cuando hay mensajes reales
+            if (data.type === 'success') {
+                console.log('Mensajes pendientes recibidos:', data);
+            }
+
             return data;
         } catch (error) {
-            console.error('Error completo obteniendo mensajes pendientes:', error);
+            console.error('Error obteniendo mensajes pendientes:', error.message);
             return { type: 'error', data: [] };
         }
     }
 
-    async confirmMessage(messageId, status = 'COMPLETADO') {
+    async confirmMessage(messageId, status = 'COMPLETADO', errorMessage = null) {
         if (!this.token) {
             await this.login();
         }
 
         try {
+            const body = {
+                id_proveedor_envio_sms: messageId,
+                estado_envio: status
+            };
+
+            // 🔧 FIX: Agregar mensaje de error si existe
+            if (errorMessage && status === 'ERROR') {
+                body.mensaje_error = errorMessage.substring(0, 255); // Limitar longitud
+            }
+
             const response = await fetch(`${this.baseUrl}/v1/gateway/sms/supplier/confirm-sent-message`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${this.token}`
                 },
-                body: JSON.stringify({
-                    id_proveedor_envio_sms: messageId,
-                    estado_envio: status
-                })
+                body: JSON.stringify(body)
             });
 
             const data = await response.json();
-            console.log('Respuesta de confirmación:', data);
+
+            if (status === 'ERROR') {
+                console.log(`⚠️  Mensaje ${messageId} marcado como ERROR:`, errorMessage);
+            }
+
             return data.type === 'success';
         } catch (error) {
-            console.error('Error completo confirmando mensaje:', error);
+            console.error('Error confirmando mensaje:', error.message);
             return false;
         }
     }

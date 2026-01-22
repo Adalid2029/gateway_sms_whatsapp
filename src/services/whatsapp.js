@@ -55,17 +55,13 @@ class WhatsAppService {
                     // ✅ Estados que indican conexión exitosa
                     if (statusSession === 'inChat' || statusSession === 'isLogged' || statusSession === 'qrReadSuccess') {
                         this.isConnected = true;
-                        this.reconnectAttempts = 0; // ✅ Reset contador
+                        this.reconnectAttempts = 0;
                         console.log('WhatsApp conectado exitosamente!');
 
-                        // ✅ Estados que requieren espera (NO desconectar)
                     } else if (statusSession === 'browserSessionConfigured' || statusSession === 'waitForLogin') {
                         console.log('Configurando sesión, esperando...');
-                        // NO cambiar isConnected aquí
 
-                        // ❌ Estados que indican desconexión real
                     } else if (statusSession === 'notLogged' || statusSession === 'browserClose' || statusSession === 'desconnectedMobile') {
-                        // Solo reconectar si realmente estaba conectado antes
                         if (this.isConnected) {
                             this.isConnected = false;
                             console.log('WhatsApp desconectado. Intentando reconectar...');
@@ -97,7 +93,6 @@ class WhatsAppService {
             const fs = require('fs').promises;
             const sessionDir = path.join(this.sessionPath, 'mySession');
 
-            // ✅ Cerrar cliente primero
             if (this.client) {
                 try {
                     await this.client.close();
@@ -107,7 +102,6 @@ class WhatsAppService {
                 this.client = null;
             }
 
-            // ✅ Limpiar TODOS los archivos de lock
             const lockFiles = [
                 'SingletonLock',
                 'SingletonSocket',
@@ -123,7 +117,6 @@ class WhatsAppService {
                 }
             }
 
-            // ✅ Pequeña pausa para que el sistema libere recursos
             await new Promise(resolve => setTimeout(resolve, 2000));
 
         } catch (error) {
@@ -166,21 +159,29 @@ class WhatsAppService {
                             if (!this.isConnected) break;
 
                             try {
+                                // 🔧 FIX: Intentar enviar mensaje
                                 await this.sendMessage(message.numero_destino, message.mensaje);
-                                await apiService.confirmMessage(message.id_proveedor_envio_sms);
+
+                                // ✅ Si llegamos aquí, el mensaje se envió correctamente
+                                await apiService.confirmMessage(message.id_proveedor_envio_sms, 'COMPLETADO');
                                 console.log(`✅ Mensaje ${message.id_proveedor_envio_sms} enviado`);
 
-                                // Pequeña pausa para no sobrecargar
-                                await new Promise(resolve => setTimeout(resolve, 1000));
-
                             } catch (error) {
+                                // ⚠️ FIX CRÍTICO: Marcar como ERROR para que no se repita infinitamente
                                 console.error(`❌ Error con mensaje ${message.id_proveedor_envio_sms}:`, error.message);
 
+                                // 🔧 Reportar error a la API
+                                await apiService.confirmMessage(message.id_proveedor_envio_sms, 'ERROR', error.message);
+
+                                // Verificar si el error es crítico de conexión
                                 if (error.message.includes('detached') || error.message.includes('Target closed')) {
                                     this.isConnected = false;
                                     break;
                                 }
                             }
+
+                            // Pequeña pausa para no sobrecargar
+                            await new Promise(resolve => setTimeout(resolve, 1000));
                         }
                     }
                 } catch (error) {
@@ -192,21 +193,68 @@ class WhatsAppService {
         }, interval);
     }
 
+    formatBolivianNumber(number) {
+        // 🔧 Limpiar: solo dígitos
+        let cleaned = number.replace(/\D/g, '');
+
+        // 🔧 Remover 591 si ya está al inicio
+        if (cleaned.startsWith('591')) {
+            cleaned = cleaned.substring(3);
+        }
+
+        // 🔧 Validar que tenga 8 dígitos (números bolivianos de celular)
+        if (cleaned.length !== 8) {
+            throw new Error(`Número inválido: ${number} (debe tener 8 dígitos sin código de país)`);
+        }
+
+        // 🔧 Validar que empiece con 6 o 7 (operadoras bolivianas)
+        if (!cleaned.startsWith('6') && !cleaned.startsWith('7')) {
+            throw new Error(`Número inválido: ${number} (debe empezar con 6 o 7)`);
+        }
+
+        // ✅ Retornar con código de país
+        return '591' + cleaned;
+    }
+
     async sendMessage(number, message) {
         if (!this.client || !this.isConnected) {
             throw new Error('Cliente WhatsApp no disponible');
         }
 
         try {
-            const formattedNumber = number.replace(/\D/g, '');
-            const to = `591${formattedNumber}@c.us`;
+            // 🔧 FIX: Formatear número correctamente
+            const formattedNumber = this.formatBolivianNumber(number);
+            const to = `${formattedNumber}@c.us`;
 
-            const result = await this.client.sendText(to, message);
+            console.log(`📤 Enviando a: ${to} (original: ${number})`);
+
+            // 🔧 FIX CRÍTICO: Timeout de 30 segundos para evitar cuelgue
+            const sendPromise = this.client.sendText(to, message);
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Timeout: mensaje tardó más de 30s')), 30000)
+            );
+
+            const result = await Promise.race([sendPromise, timeoutPromise]);
             return result;
 
         } catch (error) {
-            console.error('❌ Error enviando mensaje:', error.message);
-            throw error;
+            // 🔧 Extraer SOLO el mensaje para evitar referencias circulares
+            const errorMsg = error?.message || String(error);
+
+            // 🔧 Crear un error simple sin referencias circulares
+            const simpleError = new Error(errorMsg);
+            throw simpleError;
+        }
+    }
+
+    async cleanup() {
+        console.log('🧹 Limpiando recursos...');
+        if (this.client) {
+            try {
+                await this.client.close();
+            } catch (error) {
+                console.error('Error cerrando cliente:', error.message);
+            }
         }
     }
 }

@@ -24,10 +24,10 @@ function show_help {
 function build_image {
     echo -e "${YELLOW}Construyendo imagen Docker...${NC}"
     docker-compose build --progress=plain
-    
+
     if [ $? -ne 0 ]; then
         echo -e "${RED}Error al construir la imagen. Verificando problemas comunes...${NC}"
-        
+
         # Verificar si existe package-lock.json
         if [ ! -f "package-lock.json" ]; then
             echo -e "${YELLOW}No se encontró package-lock.json. Intentando generarlo...${NC}"
