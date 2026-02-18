@@ -23,7 +23,7 @@ function show_help {
 
 function build_image {
     echo -e "${YELLOW}Construyendo imagen Docker...${NC}"
-    docker-compose build --progress=plain
+    docker compose build --progress=plain
 
     if [ $? -ne 0 ]; then
         echo -e "${RED}Error al construir la imagen. Verificando problemas comunes...${NC}"
@@ -41,34 +41,34 @@ function build_image {
 
 function start_container {
     echo -e "${YELLOW}Iniciando contenedor...${NC}"
-    docker-compose up -d
+    docker compose up -d
     echo -e "${GREEN}Contenedor iniciado en segundo plano.${NC}"
     echo -e "Para ver los logs, ejecute: $0 logs"
 }
 
 function stop_container {
     echo -e "${YELLOW}Deteniendo contenedor...${NC}"
-    docker-compose down
+    docker compose down
 }
 
 function restart_container {
     echo -e "${YELLOW}Reiniciando contenedor...${NC}"
-    docker-compose restart
+    docker compose restart
 }
 
 function show_logs {
     echo -e "${YELLOW}Mostrando logs (use Ctrl+C para salir)...${NC}"
-    docker-compose logs -f
+    docker compose logs -f
 }
 
 function open_shell {
     echo -e "${YELLOW}Abriendo terminal bash en el contenedor...${NC}"
-    docker-compose exec whatsapp-gateway /bin/bash || docker-compose exec whatsapp-gateway /bin/sh
+    docker compose exec whatsapp-gateway /bin/bash || docker compose exec whatsapp-gateway /bin/sh
 }
 
 function check_status {
     echo -e "${YELLOW}Estado del contenedor:${NC}"
-    docker-compose ps
+    docker compose ps
     echo
     echo -e "${YELLOW}Información del contenedor:${NC}"
     docker inspect --format='{{.State.Status}}' whatsapp-gateway 2>/dev/null || echo -e "${RED}El contenedor no existe o no está en ejecución.${NC}"
@@ -76,9 +76,9 @@ function check_status {
 
 function rebuild {
     echo -e "${YELLOW}Reconstruyendo imagen y reiniciando contenedor...${NC}"
-    docker-compose down
-    docker-compose build
-    docker-compose up -d
+    docker compose down
+    docker compose build
+    docker compose up -d
     echo -e "${GREEN}Proceso completado.${NC}"
 }
 
@@ -89,7 +89,7 @@ if ! command -v docker &> /dev/null; then
 fi
 
 # Verificar que Docker Compose está instalado
-if ! command -v docker-compose &> /dev/null; then
+if ! docker compose version &> /dev/null; then
     echo -e "${RED}Docker Compose no está instalado. Por favor, instale Docker Compose primero.${NC}"
     exit 1
 fi
