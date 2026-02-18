@@ -8,8 +8,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Crear usuario no-root para seguridad (COMANDOS DEBIAN)
-RUN groupadd -g 1001 appgroup && \
-    useradd -r -u 1001 -g appgroup -m appuser
+RUN groupadd -g 5002 appgroup && \
+    useradd -r -u 5002 -g appgroup -m appuser
 
 # Configurar variables de entorno optimizadas
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
