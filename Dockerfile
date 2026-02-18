@@ -16,8 +16,7 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     NODE_ENV=production \
     NODE_OPTIONS="--max-old-space-size=350" \
-    CHROME_BIN=/usr/bin/chromium \
-    CHROMIUM_FLAGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-software-rasterizer --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --single-process"
+    CHROME_BIN=/usr/bin/chromium
 
 WORKDIR /app
 
@@ -37,9 +36,6 @@ RUN if [ ! -f package-lock.json ]; then npm install --package-lock-only; fi && \
 
 # Copiar código fuente
 COPY --chown=appuser:appgroup . .
-
-# Crear directorio para tokens con permisos
-RUN mkdir -p tokens && chmod 777 tokens
 
 # Usar dumb-init para manejo correcto de señales
 ENTRYPOINT ["dumb-init", "--"]
