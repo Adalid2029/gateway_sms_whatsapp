@@ -97,13 +97,14 @@ class WhatsAppService {
 
                         if (this.reconnectAttempts < this.maxReconnectAttempts) {
                             this.reconnectAttempts++;
+                            const delay = Math.min(2000 * Math.pow(2, this.reconnectAttempts - 1), 30000);
                             console.log(
-                                `🔄 Reconectando (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`
+                                `🔄 Reconectando (${this.reconnectAttempts}/${this.maxReconnectAttempts}) en ${delay / 1000}s...`
                             );
                             telegramService.sendWarning(
                                 `WhatsApp desconectado. Reconectando ${this.reconnectAttempts}/${this.maxReconnectAttempts}`
                             );
-                            setTimeout(() => startSock(), 5000);
+                            setTimeout(() => startSock(), delay);
                         } else {
                             console.log('❌ Máximo de intentos de reconexión alcanzado');
                             telegramService.sendCritical(
