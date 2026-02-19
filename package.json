@@ -1,7 +1,7 @@
 {
   "name": "whatsapp-gateway",
   "version": "1.0.0",
-  "description": "WhatsApp Gateway using WPPConnect",
+  "description": "WhatsApp Gateway using Baileys",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -9,11 +9,14 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "@wppconnect-team/wppconnect": "^1.38.0",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "@cacheable/node-cache": "^1.4.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.18.2",
-    "node-fetch": "^2.6.6"
+    "node-fetch": "^2.6.6",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

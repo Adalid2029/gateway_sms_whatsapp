@@ -2,7 +2,7 @@ services:
   whatsapp-gateway:
     build: .
     container_name: whatsapp-gateway
-    shm_size: 512mb
+    shm_size: 128mb
     restart: unless-stopped
     healthcheck:
         test: ["CMD", "pgrep", "-f", "node"]
@@ -14,8 +14,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1g
-          cpus: '2.0'
+          memory: 512m
+          cpus: '1.0'
     
     env_file:
       - .env
@@ -23,12 +23,8 @@ services:
     environment:
       NODE_ENV: production
       TZ: America/La_Paz
-      NODE_OPTIONS: --max-old-space-size=350
-      CHROMIUM_FLAGS: --no-sandbox --disable-dev-shm-usage --disable-gpu --single-process --disable-extensions --disable-plugins --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --no-first-run --no-default-browser-check
-      PUPPETEER_CACHE_DIR: /tmp/.puppeteer_cache
-      XDG_CONFIG_HOME: /tmp/.config
-      XDG_CACHE_HOME: /tmp/.cache
-      PUPPETEER_BROWSER_WS_ENDPOINT_TIMEOUT: 60000
+      NODE_OPTIONS: --max-old-space-size=256
+      BAILEYS_LOG_LEVEL: error
     
     volumes:
       - ./tokens:/app/tokens:Z

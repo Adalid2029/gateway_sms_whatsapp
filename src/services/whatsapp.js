@@ -1,89 +1,123 @@
-// src/services/whatsapp.js
-const wppconnect = require('@wppconnect-team/wppconnect');
+// src/services/whatsapp.js - Baileys (WebSockets, sin navegador)
 const apiService = require('./api');
 const telegramService = require('./telegram');
 const path = require('path');
 
 class WhatsAppService {
     constructor() {
-        this.client = null;
+        this.sock = null;
         this.isProcessingMessages = false;
         this.isConnected = false;
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
-        this.sessionPath = path.join(process.cwd(), 'tokens');
+        this.authPath = path.join(process.cwd(), 'tokens', 'baileys_auth');
     }
 
     async initialize() {
         try {
-            console.log('Iniciando cliente de WhatsApp optimizado...');
+            console.log('📱 Iniciando WhatsApp con Baileys (sin navegador)...');
 
-            // Limpiar sesión anterior si existe conflicto
-            await this.cleanupSession();
+            // Import dinámico (Baileys es ESM)
+            const {
+                default: makeWASocket,
+                useMultiFileAuthState,
+                fetchLatestBaileysVersion,
+                makeCacheableSignalKeyStore,
+                DisconnectReason,
+            } = await import('@whiskeysockets/baileys');
+            const NodeCache = (await import('@cacheable/node-cache')).default;
+            const pino = (await import('pino')).default;
+            const QRCode = (await import('qrcode')).default;
 
-            this.client = await wppconnect.create({
-                session: 'mySession',
-                headless: true,
-                devtools: false,
-                debug: false,
-                logQR: true,
-                createTimeout: 180000,
-                protocolTimeout: 90000,
+            const { state, saveCreds } = await useMultiFileAuthState(this.authPath);
 
-                puppeteerOptions: {
-                    timeout: 30000,
-                    args: [
-                        '--no-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--single-process',
-                        '--disable-gpu',
-                        '--disable-web-security',
-                        '--no-first-run'
-                    ],
-                    executablePath: '/usr/bin/chromium'
-                },
+            const { version } = await fetchLatestBaileysVersion();
+            console.log('📌 Versión WhatsApp Web:', version.join('.'));
 
-                catchQR: (base64Qr, asciiQR, attempts, urlCode) => {
-                    console.log('\n=============================');
-                    console.log('Código QR - Intento:', attempts);
-                    console.log(asciiQR);
-                    console.log('=============================\n');
-                },
+            const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'error' });
+            const msgRetryCounterCache = new NodeCache();
 
-                statusFind: (statusSession, session) => {
-                    console.log('Estado de la sesión:', statusSession);
+            const startSock = async () => {
+                this.sock = makeWASocket({
+                    version,
+                    auth: {
+                        creds: state.creds,
+                        keys: makeCacheableSignalKeyStore(state.keys, logger),
+                    },
+                    logger,
+                    msgRetryCounterCache,
+                    getMessage: async () => undefined,
 
-                    // ✅ Estados que indican conexión exitosa
-                    if (statusSession === 'inChat' || statusSession === 'isLogged' || statusSession === 'qrReadSuccess') {
+                    printQRInTerminal: false,
+                });
+
+                // Guardar credenciales cuando se actualicen
+                this.sock.ev.on('creds.update', saveCreds);
+
+                // Eventos de conexión
+                this.sock.ev.on('connection.update', async (update) => {
+                    const { connection, lastDisconnect, qr } = update;
+
+                    if (qr) {
+                        console.log('\n=============================');
+                        console.log('Escanea el código QR con WhatsApp:');
+                        console.log('=============================\n');
+                        try {
+                            const qrTerminal = await QRCode.toString(qr, {
+                                type: 'terminal',
+                                small: true,
+                            });
+                            console.log(qrTerminal);
+                        } catch (e) {
+                            console.log('QR (raw):', qr.substring(0, 50) + '...');
+                        }
+                        console.log('=============================\n');
+                    }
+
+                    if (connection === 'open') {
                         this.isConnected = true;
                         this.reconnectAttempts = 0;
-                        console.log('WhatsApp conectado exitosamente!');
+                        console.log('✅ WhatsApp conectado exitosamente!');
+                        await new Promise((r) => setTimeout(r, 15000));
                         telegramService.sendSuccess('WhatsApp conectado exitosamente');
+                    }
 
-                    } else if (statusSession === 'browserSessionConfigured' || statusSession === 'waitForLogin') {
-                        console.log('Configurando sesión, esperando...');
+                    if (connection === 'close') {
+                        this.isConnected = false;
+                        const statusCode = lastDisconnect?.error?.output?.statusCode;
+                        const reason = lastDisconnect?.error?.output?.connectionReason;
 
-                    } else if (statusSession === 'notLogged' || statusSession === 'browserClose' || statusSession === 'desconnectedMobile') {
-                        if (this.isConnected) {
-                            this.isConnected = false;
-                            console.log('WhatsApp desconectado. Intentando reconectar...');
-                            telegramService.sendCritical(`WhatsApp desconectado (${statusSession}). Intentando reconectar...`);
-                            this.handleReconnect();
+                        console.log('Estado WhatsApp: desconectado', { statusCode, reason });
+
+                        if (statusCode === DisconnectReason.loggedOut) {
+                            console.log('❌ Sesión cerrada. Escanea QR de nuevo.');
+                            telegramService.sendCritical('WhatsApp: sesión cerrada. Reinicia y escanea el QR.');
+                            return;
+                        }
+
+                        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+                            this.reconnectAttempts++;
+                            console.log(
+                                `🔄 Reconectando (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`
+                            );
+                            telegramService.sendWarning(
+                                `WhatsApp desconectado. Reconectando ${this.reconnectAttempts}/${this.maxReconnectAttempts}`
+                            );
+                            setTimeout(() => startSock(), 5000);
+                        } else {
+                            console.log('❌ Máximo de intentos de reconexión alcanzado');
+                            telegramService.sendCritical(
+                                'Máximo de intentos de reconexión alcanzado. El servicio se detendrá.'
+                            );
+                            process.exit(1);
                         }
                     }
-                }
-            });
+                });
+            };
 
-            // Configurar eventos de estado
-            this.client.onStateChange((state) => {
-                console.log('Estado WhatsApp:', state);
-                this.isConnected = state === 'CONNECTED';
-            });
-
-            // Iniciar polling con intervalo optimizado
+            await startSock();
             this.startMessagePolling();
             return true;
-
         } catch (error) {
             console.error('❌ Error iniciando WhatsApp:', error.message);
             telegramService.sendCritical(`Error iniciando WhatsApp: ${error.message}`);
@@ -92,62 +126,23 @@ class WhatsAppService {
         }
     }
 
-    async cleanupSession() {
-        try {
-            const fs = require('fs').promises;
-            const sessionDir = path.join(this.sessionPath, 'mySession');
-
-            if (this.client) {
-                try {
-                    await this.client.close();
-                } catch (e) {
-                    // Ignorar errores de cierre
-                }
-                this.client = null;
-            }
-
-            const lockFiles = [
-                'SingletonLock',
-                'SingletonSocket',
-                'SingletonCookie'
-            ];
-
-            for (const lockFile of lockFiles) {
-                try {
-                    await fs.unlink(path.join(sessionDir, lockFile));
-                    console.log(`🧹 ${lockFile} eliminado`);
-                } catch (e) {
-                    // No existe, está bien
-                }
-            }
-
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-        } catch (error) {
-            console.log('Limpieza de sesión completada');
-        }
-    }
-
     async handleReconnect() {
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
             console.log('❌ Máximo de intentos de reconexión alcanzado');
-            telegramService.sendCritical('Máximo de intentos de reconexión alcanzado. El servicio se detendrá.');
+            telegramService.sendCritical('Máximo de intentos de reconexión alcanzado.');
             process.exit(1);
         }
-
         this.reconnectAttempts++;
         console.log(`🔄 Intento de reconexión ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
         telegramService.sendWarning(`Intento de reconexión ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
-
-        await this.cleanupSession();
-        setTimeout(() => this.initialize(), 15000);
+        setTimeout(() => this.initialize(), 10000);
     }
 
-    async startMessagePolling() {
-        const interval = parseInt(process.env.CHECK_MESSAGES_INTERVAL) || 15000;
+    startMessagePolling() {
+        const interval = parseInt(process.env.CHECK_MESSAGES_INTERVAL, 10) || 15000;
 
         setInterval(async () => {
-            if (!this.isProcessingMessages && this.isConnected) {
+            if (!this.isProcessingMessages && this.isConnected && this.sock) {
                 this.isProcessingMessages = true;
 
                 try {
@@ -155,44 +150,41 @@ class WhatsAppService {
                     let messagesToProcess = [];
 
                     if (response?.type === 'success' && response.data) {
-                        messagesToProcess = Array.isArray(response.data) ? response.data : [response.data];
+                        messagesToProcess = Array.isArray(response.data)
+                            ? response.data
+                            : [response.data];
                     }
 
                     if (messagesToProcess.length > 0) {
                         console.log(`📨 Procesando ${messagesToProcess.length} mensajes`);
 
                         for (const message of messagesToProcess) {
-                            if (!this.isConnected) break;
+                            if (!this.isConnected || !this.sock) break;
 
                             try {
-                                // 🔧 FIX: Intentar enviar mensaje
                                 await this.sendMessage(message.numero_destino, message.mensaje);
-
-                                // ✅ Si llegamos aquí, el mensaje se envió correctamente
-                                await apiService.confirmMessage(message.id_proveedor_envio_sms, 'COMPLETADO');
+                                await apiService.confirmMessage(
+                                    message.id_proveedor_envio_sms,
+                                    'COMPLETADO'
+                                );
                                 console.log(`✅ Mensaje ${message.id_proveedor_envio_sms} enviado`);
                                 telegramService.incrementSent();
-
                             } catch (error) {
-                                // ⚠️ FIX CRÍTICO: Marcar como ERROR para que no se repita infinitamente
-                                console.error(`❌ Error con mensaje ${message.id_proveedor_envio_sms}:`, error.message);
-
-                                // 🔧 Reportar error a la API
-                                await apiService.confirmMessage(message.id_proveedor_envio_sms, 'ERROR', error.message);
+                                console.error(
+                                    `❌ Error con mensaje ${message.id_proveedor_envio_sms}:`,
+                                    error.message
+                                );
+                                await apiService.confirmMessage(
+                                    message.id_proveedor_envio_sms,
+                                    'ERROR',
+                                    error.message
+                                );
                                 telegramService.incrementFailed();
-
-                                // Verificar si el error es crítico de conexión
-                                if (error.message.includes('detached') || error.message.includes('Target closed')) {
-                                    this.isConnected = false;
-                                    telegramService.sendCritical(`Error crítico de conexión: ${error.message}`);
-                                    break;
-                                } else {
-                                    telegramService.sendWarning(`Error enviando mensaje #${message.id_proveedor_envio_sms}: ${error.message}`);
-                                }
+                                telegramService.sendWarning(
+                                    `Error enviando mensaje #${message.id_proveedor_envio_sms}: ${error.message}`
+                                );
                             }
-
-                            // Pequeña pausa para no sobrecargar
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            await new Promise((r) => setTimeout(r, 1000));
                         }
                     }
                 } catch (error) {
@@ -202,74 +194,62 @@ class WhatsAppService {
                 }
             }
 
-            // Enviar resumen periódico (cada hora)
             telegramService.sendSummary(this.isConnected);
         }, interval);
     }
 
     formatBolivianNumber(number) {
-        // 🔧 Limpiar: solo dígitos
         let cleaned = number.replace(/\D/g, '');
-
-        // 🔧 Remover 591 si ya está al inicio
         if (cleaned.startsWith('591')) {
             cleaned = cleaned.substring(3);
         }
-
-        // 🔧 Validar que tenga 8 dígitos (números bolivianos de celular)
         if (cleaned.length !== 8) {
             throw new Error(`Número inválido: ${number} (debe tener 8 dígitos sin código de país)`);
         }
-
-        // 🔧 Validar que empiece con 6 o 7 (operadoras bolivianas)
         if (!cleaned.startsWith('6') && !cleaned.startsWith('7')) {
             throw new Error(`Número inválido: ${number} (debe empezar con 6 o 7)`);
         }
-
-        // ✅ Retornar con código de país
         return '591' + cleaned;
     }
 
     async sendMessage(number, message) {
-        if (!this.client || !this.isConnected) {
+        if (!this.sock || !this.isConnected) {
             throw new Error('Cliente WhatsApp no disponible');
         }
 
-        try {
-            // 🔧 FIX: Formatear número correctamente
-            const formattedNumber = this.formatBolivianNumber(number);
-            const to = `${formattedNumber}@c.us`;
+        const formattedNumber = this.formatBolivianNumber(number);
+        const jid = `${formattedNumber}@s.whatsapp.net`;
 
-            console.log(`📤 Enviando a: ${to} (original: ${number})`);
+        console.log(`📤 Enviando a: ${jid} (original: ${number})`);
 
-            // 🔧 FIX CRÍTICO: Timeout de 30 segundos para evitar cuelgue
-            const sendPromise = this.client.sendText(to, message);
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Timeout: mensaje tardó más de 30s')), 30000)
-            );
+        await this.sock.presenceSubscribe(jid);
+        await this.sock.sendPresenceUpdate('composing', jid);
+        await new Promise((r) => setTimeout(r, 3000 + Math.random() * 3000));
+        await this.sock.sendPresenceUpdate('paused', jid);
 
-            const result = await Promise.race([sendPromise, timeoutPromise]);
-            return result;
+        const sendPromise = this.sock.sendMessage(jid, { text: message });
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Timeout: mensaje tardó más de 30s')), 30000)
+        );
 
-        } catch (error) {
-            // 🔧 Extraer SOLO el mensaje para evitar referencias circulares
-            const errorMsg = error?.message || String(error);
-
-            // 🔧 Crear un error simple sin referencias circulares
-            const simpleError = new Error(errorMsg);
-            throw simpleError;
-        }
+        return Promise.race([sendPromise, timeoutPromise]);
     }
 
     async cleanup() {
-        console.log('🧹 Limpiando recursos...');
-        if (this.client) {
+        console.log('🧹 Cerrando conexión WhatsApp...');
+        if (this.sock) {
             try {
-                await this.client.close();
-            } catch (error) {
-                console.error('Error cerrando cliente:', error.message);
+                if (typeof this.sock.end === 'function') {
+                    this.sock.end(undefined);
+                } else if (this.sock.ws && typeof this.sock.ws.close === 'function') {
+                    this.sock.ws.close();
+                }
+            } catch (e) {
+                // ignorar
             }
+            this.sock = null;
         }
+        this.isConnected = false;
     }
 }
 
