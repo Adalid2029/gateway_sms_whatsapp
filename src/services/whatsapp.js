@@ -226,12 +226,26 @@ class WhatsAppService {
 
         console.log(`📤 Enviando a: ${jid} (original: ${number})`);
 
-        const sendPromise = this.sock.sendMessage(jid, { text: message });
-        const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Timeout: mensaje tardó más de 30s')), 30000)
-        );
+        let timeoutId;
+        const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => {
+                // El socket está colgado → marcarlo como desconectado y forzar cierre
+                // para que connection.update dispare y Baileys reconecte
+                console.warn('⚠️ Timeout enviando mensaje, forzando reconexión del socket...');
+                this.isConnected = false;
+                try { this.sock?.end(undefined); } catch (_) {}
+                reject(new Error('Timeout: mensaje tardó más de 30s'));
+            }, 30000);
+        });
 
-        return Promise.race([sendPromise, timeoutPromise]);
+        try {
+            const result = await Promise.race([this.sock.sendMessage(jid, { text: message }), timeoutPromise]);
+            clearTimeout(timeoutId);
+            return result;
+        } catch (error) {
+            clearTimeout(timeoutId);
+            throw error;
+        }
     }
 
     async cleanup() {
