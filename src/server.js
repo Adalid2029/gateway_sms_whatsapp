@@ -32,12 +32,31 @@ async function gracefulShutdown(signal) {
 
 // Manejo de errores no capturados
 process.on('uncaughtException', async (error) => {
+    // undici (fetch interno de Node) lanza estas excepciones cuando WhatsApp corta el socket.
+    // No son errores fatales: Baileys gestiona la reconexión via connection.update.
+    const isTransientNetworkError =
+        error.message === 'terminated' ||
+        error.code === 'ECONNRESET' ||
+        error.code === 'UND_ERR_SOCKET' ||
+        error.cause?.code === 'ECONNRESET' ||
+        error.cause?.code === 'UND_ERR_SOCKET';
+
+    if (isTransientNetworkError) {
+        console.warn('⚠️ Error de red transitorio (undici), Baileys gestionará reconexión:', error.message);
+        return;
+    }
+
     console.error('❌ Excepción no capturada:', error);
     await telegramService.sendCritical(`Excepción no capturada: ${error.message}`);
     process.exit(1);
 });
 
 process.on('unhandledRejection', async (reason, promise) => {
+    const code = reason?.code || reason?.cause?.code;
+    if (code === 'ECONNRESET' || code === 'UND_ERR_SOCKET') {
+        console.warn('⚠️ Promesa rechazada de red transitoria (ignorada):', reason?.message || reason);
+        return;
+    }
     console.error('❌ Promesa rechazada no manejada:', reason);
     await telegramService.sendCritical(`Promesa rechazada: ${reason}`);
     process.exit(1);

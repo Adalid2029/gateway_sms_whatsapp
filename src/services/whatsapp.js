@@ -9,8 +9,9 @@ class WhatsAppService {
         this.isProcessingMessages = false;
         this.isConnected = false;
         this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
+        this.maxReconnectAttempts = 10;
         this.authPath = path.join(process.cwd(), 'tokens', 'baileys_auth');
+        this._pollingStarted = false;
     }
 
     async initialize() {
@@ -78,7 +79,6 @@ class WhatsAppService {
                         this.isConnected = true;
                         this.reconnectAttempts = 0;
                         console.log('✅ WhatsApp conectado exitosamente!');
-                        await new Promise((r) => setTimeout(r, 15000));
                         telegramService.sendSuccess('WhatsApp conectado exitosamente');
                     }
 
@@ -97,7 +97,7 @@ class WhatsAppService {
 
                         if (this.reconnectAttempts < this.maxReconnectAttempts) {
                             this.reconnectAttempts++;
-                            const delay = Math.min(2000 * Math.pow(2, this.reconnectAttempts - 1), 30000);
+                            const delay = Math.min(2000 * Math.pow(2, this.reconnectAttempts - 1), 60000);
                             console.log(
                                 `🔄 Reconectando (${this.reconnectAttempts}/${this.maxReconnectAttempts}) en ${delay / 1000}s...`
                             );
@@ -140,6 +140,9 @@ class WhatsAppService {
     }
 
     startMessagePolling() {
+        if (this._pollingStarted) return;
+        this._pollingStarted = true;
+
         const interval = parseInt(process.env.CHECK_MESSAGES_INTERVAL, 10) || 15000;
 
         setInterval(async () => {
@@ -222,11 +225,6 @@ class WhatsAppService {
         const jid = `${formattedNumber}@s.whatsapp.net`;
 
         console.log(`📤 Enviando a: ${jid} (original: ${number})`);
-
-        await this.sock.presenceSubscribe(jid);
-        await this.sock.sendPresenceUpdate('composing', jid);
-        await new Promise((r) => setTimeout(r, 3000 + Math.random() * 3000));
-        await this.sock.sendPresenceUpdate('paused', jid);
 
         const sendPromise = this.sock.sendMessage(jid, { text: message });
         const timeoutPromise = new Promise((_, reject) =>
