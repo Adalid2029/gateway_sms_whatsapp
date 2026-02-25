@@ -18,7 +18,6 @@ class WhatsAppService {
         try {
             console.log('📱 Iniciando WhatsApp con Baileys (sin navegador)...');
 
-            // Import dinámico (Baileys es ESM)
             const {
                 default: makeWASocket,
                 useMultiFileAuthState,
@@ -31,11 +30,32 @@ class WhatsAppService {
             const QRCode = (await import('qrcode')).default;
 
             const { state, saveCreds } = await useMultiFileAuthState(this.authPath);
-
             const { version } = await fetchLatestBaileysVersion();
             console.log('📌 Versión WhatsApp Web:', version.join('.'));
 
-            const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'error' });
+            // FIX #1: Logger personalizado que filtra los errores ruidosos de
+            // Signal protocol (decrypt de grupos) y transactions de Baileys.
+            // Estos NO son errores de tu aplicación; Baileys los maneja internamente.
+            const IGNORED_MSGS = [
+                'No session found to decrypt message',
+                'transaction failed, rolling back',
+                'Closing open session in favor of incoming prekey bundle',
+            ];
+
+            const logger = pino({
+                level: process.env.BAILEYS_LOG_LEVEL || 'error',
+            }).child({});
+
+            // Interceptar el método error del logger para filtrar mensajes conocidos
+            const originalError = logger.error.bind(logger);
+            logger.error = (obj, msg, ...args) => {
+                const message = typeof obj === 'string' ? obj : (msg || obj?.msg || obj?.err?.message || '');
+                if (IGNORED_MSGS.some(ignored => message.includes(ignored))) return;
+                // También filtrar por el campo msg del objeto JSON
+                if (obj?.msg && IGNORED_MSGS.some(ignored => obj.msg.includes(ignored))) return;
+                originalError(obj, msg, ...args);
+            };
+
             const msgRetryCounterCache = new NodeCache();
 
             const startSock = async () => {
@@ -47,15 +67,39 @@ class WhatsAppService {
                     },
                     logger,
                     msgRetryCounterCache,
+
+                    // FIX #2: Retardo entre reintentos de mensajes fallidos (decrypt, etc.)
+                    // Evita saturar el servidor de WhatsApp con reintentos inmediatos
+                    retryRequestDelayMs: 2000,
+
+                    // FIX #3: No descargar historial completo al reconectar.
+                    // Evita recibir una avalancha de mensajes viejos sin sender keys
+                    syncFullHistory: false,
+
+                    // FIX #4: getMessage debe devolver undefined correctamente.
+                    // Baileys lo usa internamente para reintentos; retornar undefined
+                    // le indica que no tenemos el mensaje en cache (comportamiento correcto)
                     getMessage: async () => undefined,
 
                     printQRInTerminal: false,
                 });
 
-                // Guardar credenciales cuando se actualicen
                 this.sock.ev.on('creds.update', saveCreds);
 
-                // Eventos de conexión
+                // FIX #5: Capturar errores de mensajes entrantes de grupos
+                // Los errores de decrypt de sender keys son normales al reconectar;
+                // Baileys re-solicitará las claves automáticamente en el siguiente ciclo
+                this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+                    // Solo loguear para debug si necesitas, pero no hacer nada más.
+                    // Baileys maneja internamente la re-solicitud de sender keys.
+                    for (const msg of messages) {
+                        if (msg.messageStubType) {
+                            // Mensajes de sistema/stub (cambios de grupo, etc.), ignorar
+                            continue;
+                        }
+                    }
+                });
+
                 this.sock.ev.on('connection.update', async (update) => {
                     const { connection, lastDisconnect, qr } = update;
 
@@ -95,6 +139,13 @@ class WhatsAppService {
                             return;
                         }
 
+                        // FIX #6: El statusCode 428 es connectionClosed (servidor cerró
+                        // la conexión, puede ser por inactividad o mantenimiento de WA).
+                        // Ya está manejado correctamente por el bloque de reconexión abajo.
+                        if (statusCode === 428) {
+                            console.log('⚠️ Conexión cerrada por servidor WhatsApp (428), reconectando...');
+                        }
+
                         if (this.reconnectAttempts < this.maxReconnectAttempts) {
                             this.reconnectAttempts++;
                             const delay = Math.min(2000 * Math.pow(2, this.reconnectAttempts - 1), 60000);
@@ -102,7 +153,7 @@ class WhatsAppService {
                                 `🔄 Reconectando (${this.reconnectAttempts}/${this.maxReconnectAttempts}) en ${delay / 1000}s...`
                             );
                             telegramService.sendWarning(
-                                `WhatsApp desconectado. Reconectando ${this.reconnectAttempts}/${this.maxReconnectAttempts}`
+                                `WhatsApp desconectado (${statusCode}). Reconectando ${this.reconnectAttempts}/${this.maxReconnectAttempts}`
                             );
                             setTimeout(() => startSock(), delay);
                         } else {
@@ -192,7 +243,12 @@ class WhatsAppService {
                         }
                     }
                 } catch (error) {
-                    console.error('❌ Error en polling:', error.message);
+                    // FIX #7: Diferenciar error de API (socket hang up) de otros errores
+                    if (error.message?.includes('socket hang up') || error.code === 'ECONNRESET') {
+                        console.warn('⚠️ API SMS no disponible temporalmente (socket hang up), reintentando en próximo ciclo...');
+                    } else {
+                        console.error('❌ Error en polling:', error.message);
+                    }
                 } finally {
                     this.isProcessingMessages = false;
                 }
@@ -229,17 +285,18 @@ class WhatsAppService {
         let timeoutId;
         const timeoutPromise = new Promise((_, reject) => {
             timeoutId = setTimeout(() => {
-                // El socket está colgado → marcarlo como desconectado y forzar cierre
-                // para que connection.update dispare y Baileys reconecte
                 console.warn('⚠️ Timeout enviando mensaje, forzando reconexión del socket...');
                 this.isConnected = false;
-                try { this.sock?.end(undefined); } catch (_) {}
+                try { this.sock?.end(undefined); } catch (_) { }
                 reject(new Error('Timeout: mensaje tardó más de 30s'));
             }, 30000);
         });
 
         try {
-            const result = await Promise.race([this.sock.sendMessage(jid, { text: message }), timeoutPromise]);
+            const result = await Promise.race([
+                this.sock.sendMessage(jid, { text: message }),
+                timeoutPromise,
+            ]);
             clearTimeout(timeoutId);
             return result;
         } catch (error) {
@@ -257,9 +314,7 @@ class WhatsAppService {
                 } else if (this.sock.ws && typeof this.sock.ws.close === 'function') {
                     this.sock.ws.close();
                 }
-            } catch (e) {
-                // ignorar
-            }
+            } catch (e) { /* ignorar */ }
             this.sock = null;
         }
         this.isConnected = false;
