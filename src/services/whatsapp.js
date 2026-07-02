@@ -280,31 +280,24 @@ class WhatsAppService {
         const formattedNumber = this.formatBolivianNumber(number);
         const jid = `${formattedNumber}@s.whatsapp.net`;
 
+        console.log(`📤 Verificando WhatsApp: ${jid}`);
+
+        const exists = await this.sock.onWhatsApp(jid);
+        console.log('🔎 onWhatsApp result:', JSON.stringify(exists));
+
+        if (!exists?.[0]?.exists) {
+            throw new Error(`El número ${formattedNumber} no existe en WhatsApp`);
+        }
+
         console.log(`📤 Enviando a: ${jid} (original: ${number})`);
 
-        let timeoutId;
-        const timeoutPromise = new Promise((_, reject) => {
-            timeoutId = setTimeout(() => {
-                console.warn('⚠️ Timeout enviando mensaje, forzando reconexión del socket...');
-                this.isConnected = false;
-                try { this.sock?.end(undefined); } catch (_) { }
-                reject(new Error('Timeout: mensaje tardó más de 30s'));
-            }, 30000);
-        });
+        const result = await this.sock.sendMessage(jid, { text: message });
 
-        try {
-            const result = await Promise.race([
-                this.sock.sendMessage(jid, { text: message }),
-                timeoutPromise,
-            ]);
-            clearTimeout(timeoutId);
-            return result;
-        } catch (error) {
-            clearTimeout(timeoutId);
-            throw error;
-        }
+        console.log('📨 Resultado sendMessage:', JSON.stringify(result, null, 2));
+
+        return result;
     }
-
+    
     async cleanup() {
         console.log('🧹 Cerrando conexión WhatsApp...');
         if (this.sock) {
