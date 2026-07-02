@@ -102,10 +102,7 @@ class WhatsAppService {
 
                 this.sock.ev.on('messages.update', (updates) => {
                     for (const update of updates) {
-                        console.log(
-                            '📬 ACK WhatsApp:',
-                            JSON.stringify(update, null, 2)
-                        );
+                        console.log('📬 ACK WhatsApp:', JSON.stringify(update, null, 2));
                     }
                 });
 
@@ -226,7 +223,12 @@ class WhatsAppService {
                             if (!this.isConnected || !this.sock) break;
 
                             try {
-                                await this.sendMessage(message.numero_destino, message.mensaje);
+                                const result = await this.sendMessage(message.numero_destino, message.mensaje);
+
+                                if (result?.status === 'PENDING') {
+                                    throw new Error(`WhatsApp dejó el mensaje en PENDING: ${result.key?.id}`);
+                                }
+
                                 await apiService.confirmMessage(
                                     message.id_proveedor_envio_sms,
                                     'COMPLETADO'
