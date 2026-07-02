@@ -100,6 +100,15 @@ class WhatsAppService {
                     }
                 });
 
+                this.sock.ev.on('messages.update', (updates) => {
+                    for (const update of updates) {
+                        console.log(
+                            '📬 ACK WhatsApp:',
+                            JSON.stringify(update, null, 2)
+                        );
+                    }
+                });
+
                 this.sock.ev.on('connection.update', async (update) => {
                     const { connection, lastDisconnect, qr } = update;
 
@@ -297,7 +306,7 @@ class WhatsAppService {
 
         return result;
     }
-    
+
     async cleanup() {
         console.log('🧹 Cerrando conexión WhatsApp...');
         if (this.sock) {
